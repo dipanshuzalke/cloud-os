@@ -1,0 +1,625 @@
+import type { VirtualMachine, VMStatus } from "@/features/cloud/data";
+
+const API_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+/* =========================================================
+   AUTH TYPES
+========================================================= */
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface RegisterRequest {
+  username: string;
+  email: string;
+  password: string;
+}
+
+export interface RegisterResponse {
+  access_token: string;
+  token_type: string;
+  user: UserFromAPI;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+}
+
+export interface UserFromAPI {
+  id: number;
+  username: string;
+  email: string;
+}
+
+/* =========================================================
+   VM TYPES
+========================================================= */
+
+export interface VMFromAPI {
+  id: number;
+  name: string;
+
+  status: string;
+
+  cpu: number;
+  ram: number;
+  storage: number;
+
+  os: string;
+  region: string;
+
+  ip: string | null;
+  uptime: string | null;
+
+  container_id: string | null;
+
+  created_at: string;
+  cpu_percent: number;
+
+  memory_usage: number;
+  memory_limit: number;
+  memory_percent: number;
+
+  network_rx_bytes: number;
+  network_tx_bytes: number;
+}
+
+export interface CreateVMRequest {
+  name: string;
+  cpu: number;
+  os: string;
+  region: string;
+  ram: number;
+  storage: number;
+}
+
+/* =========================================================
+   TASK TYPES
+========================================================= */
+
+export interface TaskFromAPI {
+  id: number;
+  name: string;
+  cpu_required: number;
+  ram_required: number;
+  storage_required: number;
+  status: string;
+  node_id: number | null;
+  created_at: string;
+}
+
+export interface CreateTaskRequest {
+  name: string;
+  cpu_required: number;
+  ram_required: number;
+  storage_required: number;
+}
+
+
+/* =========================================================
+   SCHEDULER API
+========================================================= */
+
+export interface SchedulerResponse {
+  algorithm: string;
+  available_algorithms: string[];
+}
+
+export interface SchedulerUpdateRequest {
+  algorithm: string;
+}
+
+export interface ComputeNodeFromAPI {
+  id: number;
+  name: string;
+
+  total_cpu: number;
+  allocated_cpu: number;
+  available_cpu: number;
+
+  total_ram: number;
+  allocated_ram: number;
+  available_ram: number;
+
+  total_storage: number;
+  allocated_storage: number;
+  available_storage: number;
+
+  status: string;
+  created_at: string;
+}
+
+export interface VMMetricFromAPI {
+  vm_id: number;
+  vm_name: string;
+
+  allocated_cpu: number;
+  allocated_ram: number;
+
+  cpu_percent: number;
+  memory_usage: number;
+  memory_percent: number;
+
+  network_rx_bytes: number;
+  network_tx_bytes: number;
+
+  recorded_at: string;
+}
+
+
+export type AutoScalingConfig = {
+  id: number;
+  enabled: boolean;
+  cpu_threshold: number;
+  scale_up_cpu: number;
+  cooldown_seconds: number;
+  last_scaled_at: string | null;
+  updated_at: string;
+};
+
+export type AutoScalingConfigUpdate = {
+  enabled: boolean;
+  cpu_threshold: number;
+  scale_up_cpu: number;
+  cooldown_seconds: number;
+};
+
+export type AutoScalingCandidate = {
+  vm_id: number;
+  vm_name: string;
+  current_cpu_percent: number;
+  cpu_threshold: number;
+  allocated_cpu: number;
+  scale_up_cpu: number;
+};
+
+export type AutoScalingCheck = {
+  enabled: boolean;
+  candidates: AutoScalingCandidate[];
+  count: number;
+};
+
+
+
+export async function getAutoScalingConfig(): Promise<AutoScalingConfig> {
+  const response = await apiFetch("/api/autoscaling");
+  return response.json();
+}
+
+export async function updateAutoScalingConfig(
+  config: AutoScalingConfigUpdate,
+): Promise<AutoScalingConfig> {
+  const response = await apiFetch("/api/autoscaling", {
+    method: "PUT",
+    body: JSON.stringify(config),
+  });
+
+  return response.json();
+}
+
+export async function checkAutoScaling(): Promise<AutoScalingCheck> {
+  const response = await apiFetch("/api/autoscaling/check");
+  return response.json();
+}
+
+export async function getScheduler(): Promise<SchedulerResponse> {
+  const response = await apiFetch("/api/scheduler");
+  return (await response.json()) as SchedulerResponse;
+}
+
+export async function updateScheduler(
+  data: SchedulerUpdateRequest,
+): Promise<SchedulerResponse> {
+  const response = await apiFetch("/api/scheduler", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+
+  return (await response.json()) as SchedulerResponse;
+}
+
+export async function getComputeNodes(): Promise<ComputeNodeFromAPI[]> {
+  const response = await apiFetch("/api/nodes");
+  return (await response.json()) as ComputeNodeFromAPI[];
+}
+
+/* =========================================================
+   API FETCH HELPER
+========================================================= */
+
+export async function apiFetch(
+  path: string,
+  options: RequestInit = {}
+): Promise<Response> {
+  const token =
+    localStorage.getItem("cloudos_token");
+
+  const headers = new Headers(
+    options.headers
+  );
+
+  headers.set(
+    "Content-Type",
+    "application/json"
+  );
+
+  if (token) {
+    headers.set(
+      "Authorization",
+      `Bearer ${token}`
+    );
+  }
+
+  const response = await fetch(
+    `${API_URL}${path}`,
+    {
+      ...options,
+      headers,
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => null);
+
+    throw new Error(
+      error?.detail ||
+        `Request failed: ${response.status}`
+    );
+  }
+
+  return response;
+}
+
+/* =========================================================
+   AUTH API
+========================================================= */
+
+/**
+ * Register a new user
+ */
+export async function registerUser(
+  data: RegisterRequest
+): Promise<RegisterResponse> {
+  const response = await apiFetch(
+    "/api/auth/register",
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    }
+  );
+
+  return response.json();
+}
+
+/**
+ * Login user
+ *
+ * Returns JWT access token.
+ */
+export async function loginUser(
+  data: LoginRequest
+): Promise<LoginResponse> {
+  /*
+   * Login does not require an existing JWT,
+   * but apiFetch will simply skip the Authorization
+   * header if no token exists.
+   */
+  const response = await apiFetch(
+    "/api/auth/login",
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    }
+  );
+
+  return response.json();
+}
+
+/**
+ * Get currently authenticated user
+ */
+export async function getCurrentUser(): Promise<UserFromAPI> {
+  const response = await apiFetch(
+    "/api/auth/me"
+  );
+
+  return response.json();
+}
+
+/* =========================================================
+   LOGOUT
+========================================================= */
+
+/**
+ * Remove locally stored authentication data.
+ *
+ * JWT authentication is stateless, so logout is handled
+ * by removing the token from the browser.
+ */
+export function logoutUser(): void {
+  localStorage.removeItem(
+    "cloudos_token"
+  );
+
+  localStorage.removeItem(
+    "cloudos_user"
+  );
+}
+
+/* =========================================================
+   VM API
+========================================================= */
+
+/**
+ * Get VMs belonging to the authenticated user.
+ */
+export async function getVMs(): Promise<VMFromAPI[]> {
+  const response = await apiFetch(
+    "/api/vms",
+    {
+      method: "GET",
+    }
+  );
+
+  return response.json();
+}
+
+/**
+ * Create VM
+ *
+ * The backend determines the user from JWT.
+ * Do NOT send user_id from the frontend.
+ */
+export async function createVM(
+  data: CreateVMRequest
+): Promise<VMFromAPI> {
+  const response = await apiFetch(
+    "/api/vms",
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    }
+  );
+
+  return response.json();
+}
+
+/**
+ * Delete VM
+ */
+export async function deleteVM(
+  vmId: number
+): Promise<VMFromAPI> {
+  const response = await apiFetch(
+    `/api/vms/${vmId}`,
+    {
+      method: "DELETE",
+    }
+  );
+
+  return response.json();
+}
+
+/**
+ * Start VM
+ */
+export async function startVM(
+  id: number
+): Promise<VMFromAPI> {
+  const response = await apiFetch(
+    `/api/vms/${id}/start`,
+    {
+      method: "POST",
+    }
+  );
+
+  return response.json();
+}
+
+/**
+ * Stop VM
+ */
+export async function stopVM(
+  id: number
+): Promise<VMFromAPI> {
+  const response = await apiFetch(
+    `/api/vms/${id}/stop`,
+    {
+      method: "POST",
+    }
+  );
+
+  return response.json();
+}
+
+/**
+ * Restart VM
+ */
+export async function restartVM(
+  id: number
+): Promise<VMFromAPI> {
+  const response = await apiFetch(
+    `/api/vms/${id}/restart`,
+    {
+      method: "POST",
+    }
+  );
+
+  return response.json();
+}
+
+/* =========================================================
+   TASK API
+========================================================= */
+
+export async function getTasks(): Promise<TaskFromAPI[]> {
+  const response = await apiFetch(
+    "/api/tasks",
+    {
+      method: "GET",
+    }
+  );
+
+  return response.json();
+}
+
+export async function createTask(
+  task: CreateTaskRequest
+): Promise<TaskFromAPI> {
+  const response = await apiFetch(
+    "/api/tasks",
+    {
+      method: "POST",
+      body: JSON.stringify(task),
+    }
+  );
+
+  return response.json();
+}
+
+export async function deleteTask(
+  taskId: number
+): Promise<TaskFromAPI> {
+  const response = await apiFetch(
+    `/api/tasks/${taskId}`,
+    {
+      method: "DELETE",
+    }
+  );
+
+  return response.json();
+}
+
+/**
+ * Start Task
+ */
+export async function startTask(
+  taskId: number
+): Promise<TaskFromAPI> {
+  const response = await apiFetch(
+    `/api/tasks/${taskId}/start`,
+    {
+      method: "POST",
+    }
+  );
+
+  return response.json();
+}
+
+/**
+ * Check Docker-backed task status
+ */
+export async function getTaskStatus(
+  taskId: number
+): Promise<TaskFromAPI> {
+  const response = await apiFetch(
+    `/api/tasks/${taskId}/status`,
+    {
+      method: "GET",
+    }
+  );
+
+  return response.json();
+}
+
+/**
+ * Complete Task
+ */
+export async function completeTask(
+  taskId: number
+): Promise<TaskFromAPI> {
+  const response = await apiFetch(
+    `/api/tasks/${taskId}/complete`,
+    {
+      method: "POST",
+    }
+  );
+
+  return response.json();
+}
+
+export async function getVMMonitoring(
+  hours = 24,
+): Promise<VMMetricFromAPI[]> {
+  const response = await apiFetch(
+    `/api/monitoring/vms?hours=${hours}`,
+  );
+
+  return response.json();
+}
+
+/* =========================================================
+   VM MAPPER
+========================================================= */
+
+export function mapVM(
+  vm: VMFromAPI
+): VirtualMachine {
+  let status: VMStatus;
+
+  switch (vm.status) {
+    case "running":
+      status = "running";
+      break;
+
+    case "stopped":
+      status = "stopped";
+      break;
+
+    case "provisioning":
+      status = "provisioning";
+      break;
+
+    case "degraded":
+      status = "degraded";
+      break;
+
+    default:
+      status = "degraded";
+  }
+
+  return {
+    id: `vm-${String(vm.id).padStart(2, "0")}`,
+
+    /*
+     * Real PostgreSQL VM ID.
+     *
+     * Keep this separate from the UI ID.
+     */
+    backendId: vm.id,
+
+    name: vm.name,
+
+    status,
+
+    cpu: vm.cpu,
+    ram: vm.ram,
+    storage: vm.storage,
+
+    os: vm.os,
+    region: vm.region,
+
+    ip: vm.ip ?? "Not assigned",
+    uptime: vm.uptime ?? "—",
+
+    ...(vm.container_id !== null && {
+      containerId: vm.container_id,
+    }),
+
+    // Real Docker runtime monitoring
+    cpuPercent: vm.cpu_percent,
+
+    memoryUsage: vm.memory_usage,
+    memoryLimit: vm.memory_limit,
+    memoryPercent: vm.memory_percent,
+
+    networkRxBytes: vm.network_rx_bytes,
+    networkTxBytes: vm.network_tx_bytes,
+    };
+}
